@@ -21,22 +21,34 @@ type OffsetTable struct {
 	size        uint32
 }
 
-func NewOffsetTable() *OffsetTable {
-	ot := make([]*Node, 1024)
+func NewOffsetTable(capacity uint32) *OffsetTable {
+	ot := make([]*Node, capacity)
 	o := OffsetTable{offsetTable: ot, size: 0}
 	return &o
+}
+
+func (t *OffsetTable) capacity() uint32 {
+	return len(t.offsetTable)
 }
 
 func (t *OffsetTable) put(hash, offset uint32) {
 	slot := hash % uint32(len(t.offsetTable))
 	t.offsetTable[slot] = &Node{offset: offset, next: t.offsetTable[slot]}
 	t.size += 1
+	rehashIfNeeded()
 }
 
 func (t *OffsetTable) get(hash uint32) *Node {
 	slot := hash % uint32(len(t.offsetTable))
 	fmt.Printf("slot %d\n", slot)
 	return t.offsetTable[slot]
+}
+
+func (t *OffsetTable) rehashNeeded(uint32) bool {
+	return t.size > 0.9*len(t.offsetTable)
+}
+
+func (t *OffsetTable) forAll(f func(int)) {
 }
 
 type Stringids struct {
@@ -53,9 +65,13 @@ func NewStringids(path string) *Stringids {
 		panic(e)
 	}
 	walSize := uint32(fi.Size())
-	offsetTable := NewOffsetTable()
+	offsetTable := NewOffsetTable(1024)
 	return &Stringids{indexPath: path, wal: wal, walSize: walSize, offsetTable: offsetTable}
 
+}
+
+func (s *Stringids) rehash() {
+	newTable := NewOffsetTable(2 * s.offsetTable.capacity())
 }
 
 func (s *Stringids) reset() {
@@ -91,6 +107,9 @@ func (s *Stringids) writeToWal(str string) uint32 {
 func (s *Stringids) add(str string) uint32 {
 	offset := s.writeToWal(str)
 	s.offsetTable.put(s.hash(str), offset)
+	if s.offsetTable.rehashNeeded() {
+		rehash()
+	}
 	return offset
 }
 
