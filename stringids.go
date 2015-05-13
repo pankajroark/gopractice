@@ -16,39 +16,68 @@ type Node struct {
 	next   *Node
 }
 
+type OffsetTable struct {
+	offsetTable []*Node
+	size        uint32
+}
+
+func NewOffsetTable() *OffsetTable {
+	ot := make([]*Node, 1024)
+	o := OffsetTable{offsetTable: ot, size: 0}
+	return &o
+}
+
+func (t *OffsetTable) put(hash, offset uint32) {
+	slot := hash % uint32(len(t.offsetTable))
+	t.offsetTable[slot] = &Node{offset: offset, next: t.offsetTable[slot]}
+	t.size += 1
+}
+
+func (t *OffsetTable) get(hash uint32) *Node {
+	slot := hash % uint32(len(t.offsetTable))
+	fmt.Printf("slot %d\n", slot)
+	return t.offsetTable[slot]
+}
+
 type Stringids struct {
 	indexPath   string
 	wal         *os.File
 	walSize     uint32
-	offsetTable []*Node
-	capacity    uint32
-	size        uint32
+	offsetTable *OffsetTable
 }
 
-func (s *Stringids) init(path string) {
-	s.indexPath = path
-	s.capacity = 1024
-	s.setup()
+func NewStringids(path string) *Stringids {
+	wal, _ := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
+	fi, e := wal.Stat()
+	if e != nil {
+		panic(e)
+	}
+	walSize := uint32(fi.Size())
+	offsetTable := NewOffsetTable()
+	return &Stringids{indexPath: path, wal: wal, walSize: walSize, offsetTable: offsetTable}
+
 }
 
-func (s *Stringids) setup() {
+func (s *Stringids) reset() {
 	s.wal, _ = os.OpenFile(s.indexPath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
-	s.offsetTable = make([]*Node, s.capacity)
+	fi, e := s.wal.Stat()
+	if e != nil {
+		panic(e)
+	}
+	s.walSize = uint32(fi.Size())
+	s.offsetTable = NewOffsetTable()
 }
 
-func (s *Stringids) loc(str string) uint32 {
+func (s *Stringids) hash(str string) uint32 {
 	hash := fnv.New32()
 	_, e := hash.Write([]byte(str))
 	if e != nil {
 		panic(e)
 	}
-	h := hash.Sum32()
-	return h % uint32(len(s.offsetTable))
+	return hash.Sum32()
 }
 
-func (s *Stringids) add(str string) uint32 {
-	slot := s.loc(str)
-	fmt.Printf("slot %d\n", slot)
+func (s *Stringids) writeToWal(str string) uint32 {
 	offset := s.walSize
 	binary.Write(s.wal, binary.LittleEndian, uint16(len(str)))
 	n, err := s.wal.Write([]byte(str))
@@ -56,8 +85,12 @@ func (s *Stringids) add(str string) uint32 {
 		panic(err)
 	}
 	s.walSize += uint32(n) + 2 // 2 bytes for size
-	s.offsetTable[slot] = &Node{offset: offset, next: s.offsetTable[slot]}
-	s.size += 1
+	return offset
+}
+
+func (s *Stringids) add(str string) uint32 {
+	offset := s.writeToWal(str)
+	s.offsetTable.put(s.hash(str), offset)
 	return offset
 }
 
@@ -74,9 +107,7 @@ func (s *Stringids) strAtOffset(offset uint32) string {
 }
 
 func (s *Stringids) getId(str string) (uint32, error) {
-	slot := s.loc(str)
-	fmt.Printf("slot %d\n", slot)
-	node := s.offsetTable[slot]
+	node := s.offsetTable.get(s.hash(str))
 	for node != nil {
 		tstr := s.strAtOffset(node.offset)
 		if tstr == str {
@@ -92,12 +123,11 @@ func (s *Stringids) clear() {
 	if err != nil {
 		panic(err)
 	}
-	s.setup()
+	s.reset()
 }
 
 func main() {
-	s := Stringids{}
-	s.init("/tmp/testpath")
+	s := NewStringids("/tmp/testpath")
 	s.clear()
 	fmt.Printf("offset %d\n", s.add("some"))
 	fmt.Printf("offset %d\n", s.add("other"))
