@@ -28,27 +28,33 @@ func NewOffsetTable(capacity uint32) *OffsetTable {
 }
 
 func (t *OffsetTable) capacity() uint32 {
-	return len(t.offsetTable)
+	return uint32(len(t.offsetTable))
 }
 
 func (t *OffsetTable) put(hash, offset uint32) {
 	slot := hash % uint32(len(t.offsetTable))
 	t.offsetTable[slot] = &Node{offset: offset, next: t.offsetTable[slot]}
 	t.size += 1
-	rehashIfNeeded()
 }
 
 func (t *OffsetTable) get(hash uint32) *Node {
 	slot := hash % uint32(len(t.offsetTable))
-	fmt.Printf("slot %d\n", slot)
 	return t.offsetTable[slot]
 }
 
-func (t *OffsetTable) rehashNeeded(uint32) bool {
-	return t.size > 0.9*len(t.offsetTable)
+func (t *OffsetTable) rehashNeeded() bool {
+	return float64(t.size) > 0.9*float64(len(t.offsetTable))
 }
 
-func (t *OffsetTable) forAll(f func(int)) {
+func (t *OffsetTable) forAll(f func(uint32)) {
+	var i uint32
+	for i = 0; i < t.capacity(); i++ {
+		node := t.offsetTable[i]
+		for node != nil {
+			f(node.offset)
+			node = node.next
+		}
+	}
 }
 
 type Stringids struct {
@@ -71,7 +77,15 @@ func NewStringids(path string) *Stringids {
 }
 
 func (s *Stringids) rehash() {
-	newTable := NewOffsetTable(2 * s.offsetTable.capacity())
+	fmt.Println("rehashing...")
+	nt := NewOffsetTable(2 * s.offsetTable.capacity())
+	anon := func(offset uint32) {
+		str := s.strAtOffset(offset)
+		h := s.hash(str)
+		nt.put(h, offset)
+	}
+	s.offsetTable.forAll(anon)
+	s.offsetTable = nt
 }
 
 func (s *Stringids) reset() {
@@ -81,7 +95,7 @@ func (s *Stringids) reset() {
 		panic(e)
 	}
 	s.walSize = uint32(fi.Size())
-	s.offsetTable = NewOffsetTable()
+	s.offsetTable = NewOffsetTable(s.offsetTable.capacity())
 }
 
 func (s *Stringids) hash(str string) uint32 {
@@ -105,10 +119,13 @@ func (s *Stringids) writeToWal(str string) uint32 {
 }
 
 func (s *Stringids) add(str string) uint32 {
-	offset := s.writeToWal(str)
-	s.offsetTable.put(s.hash(str), offset)
-	if s.offsetTable.rehashNeeded() {
-		rehash()
+	offset, err := s.getId(str)
+	if err != nil {
+		offset = s.writeToWal(str)
+		s.offsetTable.put(s.hash(str), offset)
+		if s.offsetTable.rehashNeeded() {
+			s.rehash()
+		}
 	}
 	return offset
 }
@@ -130,6 +147,7 @@ func (s *Stringids) getId(str string) (uint32, error) {
 	for node != nil {
 		tstr := s.strAtOffset(node.offset)
 		if tstr == str {
+			fmt.Println("found")
 			return node.offset, nil
 		}
 		node = node.next
@@ -148,12 +166,27 @@ func (s *Stringids) clear() {
 func main() {
 	s := NewStringids("/tmp/testpath")
 	s.clear()
-	fmt.Printf("offset %d\n", s.add("some"))
-	fmt.Printf("offset %d\n", s.add("other"))
-	fmt.Printf("offset %d\n", s.add("thing"))
-	fmt.Println(s.strAtOffset(0))
-	fmt.Println(s.strAtOffset(6))
-	fmt.Println(s.getId("other"))
-	fmt.Println(s.getId("thing"))
+	/*
+		fmt.Printf("offset %d\n", s.add("some"))
+		fmt.Printf("offset %d\n", s.add("other"))
+		fmt.Printf("offset %d\n", s.add("thing"))
+		fmt.Println(s.strAtOffset(0))
+		fmt.Println(s.strAtOffset(6))
+		fmt.Println(s.getId("other"))
+		fmt.Println(s.getId("thing"))
+	*/
+	offsets := make([]uint32, 400000)
+	for i := 0; i < 200000; i++ {
+		str := fmt.Sprintf("some %d", i)
+		//fmt.Printf("str is %s\n", str)
+		offset := s.add(str)
+		//fmt.Printf("offset is %d\n", offset)
+		offsets[i] = offset
+	}
+	/*
+		for i := 0; i < 2000; i++ {
+			fmt.Println(s.strAtOffset(offsets[i]))
+		}
+	*/
 	//fmt.Println
 }
