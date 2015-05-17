@@ -22,13 +22,13 @@ const ScanFactor = 10
 const EmptySlot = 0x00
 const FullSlot = 0x01
 
-type Iht struct {
+type IntHashTable struct {
 	b []byte
 }
 
 // @param initialCapacity initial capacity for storing number of key value pairs
-func CreateIht(initialCapacity uint32) Iht {
-	iht := Iht{}
+func CreateIntHashTable(initialCapacity uint32) IntHashTable {
+	iht := IntHashTable{}
 	iht.b = make([]byte, initialCapacity*SlotSize)
 	return iht
 }
@@ -85,39 +85,39 @@ func readUInt32(ba []byte, offset uint32) uint32 {
 		uint32(ba[offset+3])<<24
 }
 
-func (i *Iht) forAll(f func(k, v uint32)) {
-	numSlots := uint32(cap(i.b) / SlotSize)
+func (iht *IntHashTable) forAll(f func(k, v uint32)) {
+	numSlots := uint32(cap(iht.b) / SlotSize)
 	for slot := uint32(0); slot < numSlots; slot++ {
 		byteLoc := slot * SlotSize
-		if i.b[byteLoc] == FullSlot {
-			k := readUInt32(i.b, byteLoc+1)
-			v := readUInt32(i.b, byteLoc+5)
+		if iht.b[byteLoc] == FullSlot {
+			k := readUInt32(iht.b, byteLoc+1)
+			v := readUInt32(iht.b, byteLoc+5)
 			f(k, v)
 		}
 	}
 }
 
-func (i *Iht) grow() {
+func (iht *IntHashTable) grow() {
 	// double size of buffer and add all key values
 	fmt.Println("Rehashing...")
-	newBytes := make([]byte, 2*cap(i.b))
+	newBytes := make([]byte, 2*cap(iht.b))
 	inserter := func(k, v uint32) {
 		put(newBytes, k, v)
 	}
-	i.forAll(inserter)
-	i.b = newBytes
+	iht.forAll(inserter)
+	iht.b = newBytes
 }
 
-func (i *Iht) put(k, v uint32) {
-	e := put(i.b, k, v)
+func (iht *IntHashTable) put(k, v uint32) {
+	e := put(iht.b, k, v)
 	if e != nil {
-		i.grow()
-		i.put(k, v)
+		iht.grow()
+		iht.put(k, v)
 	}
 }
 
-func (i *Iht) get(k uint32) (uint32, bool) {
-	numSlots := uint32(cap(i.b) / SlotSize)
+func (iht *IntHashTable) get(k uint32) (uint32, bool) {
+	numSlots := uint32(cap(iht.b) / SlotSize)
 	h := hash(k)
 	slot := h % numSlots
 	slotByteLoc := slot * SlotSize
@@ -125,10 +125,10 @@ func (i *Iht) get(k uint32) (uint32, bool) {
 	for {
 		// slotByteLoc wraps around
 		slotByteLoc = (slot % numSlots) * SlotSize
-		if i.b[slotByteLoc] == FullSlot {
-			readKey := readUInt32(i.b, slotByteLoc+1)
+		if iht.b[slotByteLoc] == FullSlot {
+			readKey := readUInt32(iht.b, slotByteLoc+1)
 			if readKey == k {
-				v := readUInt32(i.b, slotByteLoc+5)
+				v := readUInt32(iht.b, slotByteLoc+5)
 				return v, true
 			} else {
 				// slot is monotonically increasing
@@ -144,7 +144,7 @@ func (i *Iht) get(k uint32) (uint32, bool) {
 }
 
 func main() {
-	iht := CreateIht(10)
+	iht := CreateIntHashTable(10)
 	numItems := uint32(1025)
 	for i := uint32(0); i < numItems; i++ {
 		iht.put(i, 2*i)
