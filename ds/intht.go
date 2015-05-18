@@ -2,10 +2,9 @@ package ds
 
 // todo use tabulation hashing
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/fnv"
+	"math/rand"
 )
 
 /*
@@ -26,6 +25,17 @@ type IntHashTable struct {
 	ba []byte
 }
 
+var tabHashTables [4][256]int
+
+func init() {
+	rand.Seed(31)
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 256; j++ {
+			tabHashTables[i][j] = rand.Int()
+		}
+	}
+}
+
 // @param initialCapacity initial capacity for storing number of key value pairs
 func CreateIntHashTable(initialCapacity uint32) IntHashTable {
 	iht := IntHashTable{}
@@ -34,20 +44,18 @@ func CreateIntHashTable(initialCapacity uint32) IntHashTable {
 }
 
 func hash(k uint32) uint32 {
-	// todo: use tabulation hashing
-	h := fnv.New32()
-	e := binary.Write(h, binary.LittleEndian, k)
-	if e != nil {
-		panic(e)
-	}
-	return h.Sum32()
+	h := tabHashTables[0][k&0x000000FF] ^
+		tabHashTables[1][k>>8&0x000000FF] ^
+		tabHashTables[2][k>>16&0x000000FF] ^
+		tabHashTables[3][k>>24&0x000000FF]
+	return uint32(h)
 }
 
 // Simply write th 9 bytes to byte buffer starting at slot location
 func writeKV(buffer []byte, k, v, loc uint32) {
 	buffer[loc] = FullSlot
-	putUInt32(buffer, loc+1, k)
-	putUInt32(buffer, loc+5, v)
+	PutUInt32(buffer, loc+1, k)
+	PutUInt32(buffer, loc+5, v)
 }
 
 func put(buffer []byte, k, v uint32) error {
@@ -59,7 +67,7 @@ func put(buffer []byte, k, v uint32) error {
 	for buffer[slotByteLoc] != EmptySlot {
 		// explicit check in case we add another state for slot in future
 		if buffer[slotByteLoc] == FullSlot {
-			readKey := readUInt32(buffer, slotByteLoc+1)
+			readKey := ReadUInt32(buffer, slotByteLoc+1)
 			if readKey == k {
 				// key already exists just overwrite it
 				break
@@ -78,7 +86,7 @@ func put(buffer []byte, k, v uint32) error {
 }
 
 // LittleEndian
-func putUInt32(ba []byte, offset, i uint32) {
+func PutUInt32(ba []byte, offset, i uint32) {
 	ba[offset] = byte(i)
 	ba[offset+1] = byte(i >> 8)
 	ba[offset+2] = byte(i >> 16)
@@ -86,20 +94,20 @@ func putUInt32(ba []byte, offset, i uint32) {
 }
 
 // LittleEndian
-func readUInt32(ba []byte, offset uint32) uint32 {
+func ReadUInt32(ba []byte, offset uint32) uint32 {
 	return uint32(ba[offset]) |
 		uint32(ba[offset+1])<<8 |
 		uint32(ba[offset+2])<<16 |
 		uint32(ba[offset+3])<<24
 }
 
-func (iht *IntHashTable) forAll(f func(k, v uint32)) {
+func (iht *IntHashTable) ForAll(f func(k, v uint32)) {
 	numSlots := uint32(cap(iht.ba) / SlotSize)
 	for slot := uint32(0); slot < numSlots; slot++ {
 		byteLoc := slot * SlotSize
 		if iht.ba[byteLoc] == FullSlot {
-			k := readUInt32(iht.ba, byteLoc+1)
-			v := readUInt32(iht.ba, byteLoc+5)
+			k := ReadUInt32(iht.ba, byteLoc+1)
+			v := ReadUInt32(iht.ba, byteLoc+5)
 			f(k, v)
 		}
 	}
@@ -112,7 +120,7 @@ func (iht *IntHashTable) grow() {
 	inserter := func(k, v uint32) {
 		put(newBytes, k, v)
 	}
-	iht.forAll(inserter)
+	iht.ForAll(inserter)
 	iht.ba = newBytes
 }
 
@@ -134,9 +142,9 @@ func (iht *IntHashTable) Get(k uint32) (uint32, bool) {
 		// slotByteLoc wraps around
 		slotByteLoc = (slot % numSlots) * SlotSize
 		if iht.ba[slotByteLoc] == FullSlot {
-			readKey := readUInt32(iht.ba, slotByteLoc+1)
+			readKey := ReadUInt32(iht.ba, slotByteLoc+1)
 			if readKey == k {
-				v := readUInt32(iht.ba, slotByteLoc+5)
+				v := ReadUInt32(iht.ba, slotByteLoc+5)
 				return v, true
 			} else {
 				// slot is monotonically increasing
